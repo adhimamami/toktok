@@ -30,12 +30,12 @@ jobs:
           Write-Host "✅ Ngrok authentication successful!"
         shell: pwsh
 
-      # 3️⃣ Aktifkan Remote Desktop (RDP) + Firewall Rules
-      - name: Enable Remote Desktop (RDP)
+      # 3️⃣ Pastikan Layanan RDP Berjalan dengan Baik
+      - name: Enable & Restart Remote Desktop Services
         run: |
-          Write-Host "🔧 Configuring RDP..."
+          Write-Host "🔧 Enabling RDP services..."
           
-          # Aktifkan RDP
+          # Aktifkan layanan RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
 
           # Pastikan firewall mengizinkan RDP
@@ -44,12 +44,11 @@ jobs:
           # Nonaktifkan User Authentication agar lebih kompatibel
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
 
-          # Set registry policy agar RDP bisa digunakan
-          New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name "fDenyTSConnections" -PropertyType DWord -Value 0 -Force
+          # Aktifkan service RDP
+          Set-Service -Name TermService -StartupType Automatic
+          Start-Service -Name TermService
 
-          # Restart layanan RDP
-          Restart-Service -Name TermService -Force
-          Write-Host "✅ RDP enabled and configured!"
+          Write-Host "✅ RDP services enabled & restarted!"
         shell: pwsh
 
       # 4️⃣ Atur Password User "runneradmin"
@@ -60,7 +59,15 @@ jobs:
           Write-Host "✅ Admin password set!"
         shell: pwsh
 
-      # 5️⃣ Jalankan Ngrok di Background & Ambil URL RDP
+      # 5️⃣ **Menunggu RDP Siap**
+      - name: Wait for RDP to fully initialize
+        run: |
+          Write-Host "⏳ Waiting for RDP to fully initialize..."
+          Start-Sleep -Seconds 15
+          Write-Host "✅ RDP should be ready now!"
+        shell: pwsh
+
+      # 6️⃣ Jalankan Ngrok di Background & Ambil URL RDP
       - name: Start Ngrok Tunnel
         run: |
           Write-Host "🚀 Starting Ngrok tunnel..."
@@ -81,12 +88,12 @@ jobs:
           Write-Host "🔑 Password: P@ssw0rd!"
         shell: pwsh
 
-      # 6️⃣ Menampilkan URL Ngrok ke Output Log GitHub Actions
+      # 7️⃣ Menampilkan URL Ngrok ke Output Log GitHub Actions
       - name: Show RDP Credentials
         run: cat ngrok_rdp.txt
         shell: pwsh
 
-      # 7️⃣ Keep Alive (Agar Workflow Tidak Berhenti)
+      # 8️⃣ **Keep Alive (Agar Workflow Tidak Berhenti)**
       - name: Keep Alive
         run: |
           Write-Host "🟢 Keeping session alive..."
