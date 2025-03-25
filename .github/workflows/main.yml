@@ -1,4 +1,4 @@
-name: Secure RDP via Ngrok (Stable Version)
+name: Stable RDP via Ngrok
 
 on:
   workflow_dispatch:
@@ -8,63 +8,79 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Cleanup Previous Setup
+    - name: Cleanup Previous Files
       run: |
         Remove-Item -Path ngrok, ngrok.zip -Recurse -Force -ErrorAction SilentlyContinue
       shell: pwsh
 
     - name: Download & Extract Ngrok
       run: |
-        # Versi alternatif dari GitHub (lebih stabil)
-        $ngrokUrl = "https://github.com/wez/ngrok/releases/download/ngrok-v3/ngrok-v3-windows-amd64.zip"
+        # URL resmi Ngrok yang telah diverifikasi
+        $ngrokUrl = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
         
-        # Download
-        Invoke-WebRequest -Uri $ngrokUrl -OutFile ngrok.zip -TimeoutSec 30
+        # Fix TLS protocol
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         
-        # Buat directory dan ekstrak
+        # Download dengan retry
+        $retryCount = 0
+        $maxRetries = 3
+        do {
+          try {
+            Invoke-WebRequest -Uri $ngrokUrl -OutFile ngrok.zip -TimeoutSec 30
+            break
+          } catch {
+            $retryCount++
+            if ($retryCount -ge $maxRetries) {
+              Write-Error "🚨 Gagal download Ngrok setelah $maxRetries percobaan"
+              exit 1
+            }
+            Write-Host "🔄 Retry download ($retryCount/$maxRetries)..."
+            Start-Sleep -Seconds 5
+          }
+        } while ($true)
+
+        # Ekstrak dengan PowerShell
         New-Item -Path ngrok -ItemType Directory -Force
         Expand-Archive -Path ngrok.zip -DestinationPath ngrok -Force
         
-        # Validasi
+        # Validasi ekstraksi
         if (-not (Test-Path ngrok/ngrok.exe)) {
-          Write-Error "❌ Ekstraksi Ngrok gagal!"
+          Write-Error "❌ Gagal ekstrak Ngrok!"
+          Get-ChildItem ngrok | Write-Host
           exit 1
         }
-        Write-Host "✅ Ngrok berhasil diinstall"
+        Write-Host "✅ Ngrok sukses diinstall"
       shell: pwsh
 
     - name: Configure RDP
       run: |
         # Nonaktifkan NLA
-        reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f
-
-        # Aktifkan RDP
-        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
         
-        # Firewall Rules
+        # Aktifkan RDP
+        Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        
+        # Firewall rules
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        New-NetFirewallRule -Name "RDP_NGROK_TCP" -DisplayName "RDP via Ngrok (TCP)" -Protocol TCP -LocalPort 3389 -Action Allow
+        New-NetFirewallRule -Name "RDP_NGROK" -DisplayName "RDP via Ngrok" -Protocol TCP -LocalPort 3389 -Action Allow
         
         # Restart service
         Restart-Service TermService -Force
-        Write-Host "✅ RDP dikonfigurasi"
       shell: pwsh
 
-    - name: Create RDP User
+    - name: Create User
       run: |
-        $username = "GH-User"
-        $password = ConvertTo-SecureString "Github@RDP-2024!" -AsPlainText -Force
+        $user = "WinUser"
+        $password = ConvertTo-SecureString "SecurePass123!" -AsPlainText -Force
         
-        # Hapus user jika sudah ada
-        if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
-          Remove-LocalUser -Name $username
+        # Hapus user lama
+        if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
+          Remove-LocalUser -Name $user
         }
         
         # Buat user baru
-        New-LocalUser -Name $username -Password $password -AccountNeverExpires
-        Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-        
-        Write-Host "✅ User dibuat: $username"
+        New-LocalUser -Name $user -Password $password -AccountNeverExpires
+        Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user
       shell: pwsh
 
     - name: Start Ngrok Tunnel
@@ -74,39 +90,35 @@ jobs:
         # Autentikasi
         ./ngrok/ngrok config add-authtoken $env:NGROK_AUTH_TOKEN
         
-        # Jalankan Ngrok di background
-        Start-Process -FilePath "./ngrok/ngrok.exe" -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput ngrok.log -PassThru
+        # Jalankan Ngrok dengan logging
+        Start-Process -FilePath "./ngrok/ngrok.exe" -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput ngrok.log -NoNewWindow
         
         # Tunggu tunnel aktif
-        $timeout = 60  # 60 detik timeout
-        $startTime = Get-Date
-        while (-not (Test-Path ngrok.log) {
-          if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) {
-            Write-Error "❌ Ngrok timeout!"
-            exit 1
+        $tunnelUrl = $null
+        $timeout = 60 # detik
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        
+        while ($timer.Elapsed.TotalSeconds -lt $timeout) {
+          if (Test-Path ngrok.log) {
+            $tunnelUrl = Get-Content ngrok.log | Select-String -Pattern "tcp://(.+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+            if ($tunnelUrl) { break }
           }
-          Start-Sleep -Seconds 3
+          Start-Sleep -Seconds 2
         }
         
-        # Ekstrak URL dari log
-        $tcpUrl = Get-Content ngrok.log | Select-String "started tunnel" | ForEach-Object { 
-          if ($_ -match 'url=tcp://(.+)\s') { $matches[1] }
-        }
-        
-        if (-not $tcpUrl) {
-          Write-Error "❌ Gagal mendapatkan URL Ngrok"
-          Get-Content ngrok.log | Write-Host
+        if (-not $tunnelUrl) {
+          Write-Error "❌ Gagal membuat tunnel"
+          Get-Content ngrok.log
           exit 1
         }
         
-        Write-Host "========================================"
-        Write-Host "🌐 RDP TUNNEL BERHASIL DIBUAT"
-        Write-Host "Alamat: $tcpUrl"
-        Write-Host "Username: GH-User"
-        Write-Host "Password: Github@RDP-2024!"
-        Write-Host "========================================"
+        Write-Host "=================== RDP INFO ==================="
+        Write-Host "Alamat: $tunnelUrl"
+        Write-Host "User: WinUser"
+        Write-Host "Password: SecurePass123!"
+        Write-Host "================================================"
       shell: pwsh
 
-    - name: Keep Session Alive
+    - name: Maintain Connection
       run: while ($true) { Start-Sleep -Seconds 3600 }
       shell: pwsh
