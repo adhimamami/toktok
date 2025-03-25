@@ -1,6 +1,6 @@
 name: RDP with Ngrok
 
-on: 
+on:
   - push
   - workflow_dispatch
 
@@ -12,6 +12,7 @@ jobs:
       # 1️⃣ Download & Extract Ngrok
       - name: Download & Extract Ngrok
         run: |
+          Write-Host "🚀 Downloading Ngrok..."
           Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
           Expand-Archive -Path "ngrok.zip" -DestinationPath "ngrok"
           if (-Not (Test-Path "ngrok\ngrok.exe")) {
@@ -41,14 +42,23 @@ jobs:
           # Pastikan firewall mengizinkan RDP
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-          # Nonaktifkan User Authentication agar lebih kompatibel
+          # Nonaktifkan User Authentication (NLA) agar lebih kompatibel
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
 
-          # Aktifkan service RDP
-          Set-Service -Name TermService -StartupType Automatic
-          Start-Service -Name TermService
+          # Pastikan encryption RDP dalam mode kompatibel
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
 
-          Write-Host "✅ RDP services enabled & restarted!"
+          # Restart service RDP agar perubahan berlaku
+          Restart-Service -Name TermService -Force
+
+          # Cek apakah RDP berjalan
+          $rdpStatus = Get-Service -Name TermService | Select-Object -ExpandProperty Status
+          if ($rdpStatus -ne "Running") {
+            Write-Host "❌ ERROR: RDP Service is not running!"
+            exit 1
+          }
+
+          Write-Host "✅ RDP services enabled & running!"
         shell: pwsh
 
       # 4️⃣ Atur Password User "runneradmin"
