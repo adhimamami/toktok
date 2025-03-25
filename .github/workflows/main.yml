@@ -1,6 +1,6 @@
 name: RDP with Ngrok
 
-on: 
+on:
   - push
   - workflow_dispatch
 
@@ -39,7 +39,7 @@ jobs:
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+          .\ngrok\ngrok.exe config add-authtoken $Env:NGROK_AUTH_TOKEN
           Write-Host "✅ Ngrok authentication successful!"
         shell: pwsh
 
@@ -49,32 +49,70 @@ jobs:
           Write-Host "🔧 Configuring RDP..."
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          #  Tidak perlu mengatur UserAuthentication, biarkan default (0) untuk Network Level Authentication (NLA). Lebih aman.
+          # Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
           Write-Host "✅ RDP enabled!"
         shell: pwsh
 
-      # 6️⃣ Atur Password User "runneradmin"
-      - name: Set Admin Password
+      # 6️⃣ Buat User Baru & Atur Password  (Lebih Aman)
+      - name: Create User and Set Password
         run: |
-          $password = ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force
-          Set-LocalUser -Name "runneradmin" -Password $password
-          Write-Host "✅ Admin password set!"
-        shell: pwsh
+          $username = "RDPUser" # Ganti jika perlu
+          $password = ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force # Password Kuat!
+          
+          # Cek jika user sudah ada
+          if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
+              Write-Host "User '$username' already exists.  Updating password..."
+              Set-LocalUser -Name $username -Password $password
+          } else {
+              New-LocalUser -Name $username -Password $password -Description "RDP Access User" -PasswordNeverExpires
+              Write-Host "User '$username' created."
+          }
+          
+          # Tambahkan user ke group Remote Desktop Users
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
 
+          Write-Host "✅ User created/updated and added to Remote Desktop Users group!"
+          Write-Host "🧑‍💻 Username: $username"
+          Write-Host "🔑 Password: P@ssw0rd123!" # Tampilkan password di log (untuk kemudahan, tapi HATI-HATI di lingkungan produksi!)
+        shell: pwsh
+        
       # 7️⃣ Jalankan Ngrok di Background & Ambil URL
       - name: Start Ngrok Tunnel
         run: |
           Write-Host "🚀 Starting Ngrok tunnel..."
-          Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
-          Start-Sleep -Seconds 10  # Beri waktu untuk Ngrok berjalan
+          # Gunakan Start-Job untuk menjalankan Ngrok di background *tanpa* memblokir
+          $ngrokJob = Start-Job -ScriptBlock {
+              .\ngrok\ngrok.exe tcp 3389
+          }
+          
+          Start-Sleep -Seconds 15  # Beri waktu lebih untuk Ngrok benar-benar jalan
 
-          # Ambil URL Ngrok
-          $ngrok_url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels | ConvertFrom-Json).tunnels[0].public_url
+          # Ambil URL Ngrok, loop sampai dapat
+          $ngrok_url = $null
+          $attempts = 0
+          while (-not $ngrok_url -and $attempts -lt 10) {  # Coba maksimal 10 kali
+              try {
+                  $ngrok_url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels -TimeoutSec 5).Content | ConvertFrom-Json | Select-Object -ExpandProperty tunnels | Where-Object {$_.public_url -like "tcp://*"} | Select-Object -ExpandProperty public_url
+              }
+              catch {
+                  Write-Host "Waiting for Ngrok tunnel..."
+              }
+              Start-Sleep -Seconds 5
+              $attempts++
+          }
+            
+          if (-not $ngrok_url) {
+              Write-Host "❌ ERROR: Failed to retrieve Ngrok URL after multiple attempts."
+              exit 1  # Hentikan workflow jika gagal
+          }
+
           Write-Host "✅ Ngrok Tunnel Ready!"
           Write-Host "🌍 Server Address: $ngrok_url"
-          Write-Host "🧑‍💻 Username: runneradmin"
-          Write-Host "🔑 Password: P@ssw0rd!"
+          
         shell: pwsh
+
+
 
       # 8️⃣ Keep Alive (Agar Workflow Tidak Berhenti)
       - name: Keep Alive
