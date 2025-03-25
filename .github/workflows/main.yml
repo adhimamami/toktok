@@ -1,56 +1,70 @@
-name: CI
+name: RDP with Ngrok
 
 on: 
   - push
   - workflow_dispatch
 
 jobs:
-  build:
+  setup_rdp:
     runs-on: windows-latest
 
     steps:
+      # 1️⃣ Download Ngrok
       - name: Download Ngrok
         run: |
           Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-          Write-Host "Ngrok ZIP downloaded!"
+          Write-Host "✅ Ngrok ZIP downloaded!"
         shell: pwsh
 
+      # 2️⃣ Ekstrak Ngrok
       - name: Extract Ngrok
         run: |
           Expand-Archive -Path "ngrok.zip" -DestinationPath "ngrok"
-          Write-Host "Ngrok extracted!"
+          Write-Host "✅ Ngrok extracted!"
           Get-ChildItem -Path "ngrok" -Recurse  # Debugging isi folder
         shell: pwsh
 
+      # 3️⃣ Pastikan Ngrok Terekstrak dengan Benar
       - name: Check Ngrok Executable
         run: |
           if (-Not (Test-Path "ngrok\ngrok.exe")) {
-            Write-Host "ERROR: Ngrok executable not found!"
+            Write-Host "❌ ERROR: Ngrok executable not found!"
             exit 1
+          } else {
+            Write-Host "✅ Ngrok executable found!"
           }
         shell: pwsh
 
+      # 4️⃣ Set Ngrok Auth Token
       - name: Set Ngrok Auth Token
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
           .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+          Write-Host "✅ Ngrok authentication successful!"
         shell: pwsh
 
-      - name: Enable Remote Desktop (RDP)
+      # 5️⃣ Aktifkan Remote Desktop (RDP)
+      - name: Enable Remote Desktop
         run: |
+          Write-Host "🔧 Configuring RDP..."
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          Write-Host "✅ RDP enabled!"
         shell: pwsh
 
+      # 6️⃣ Atur Password User "runneradmin"
       - name: Set Admin Password
         run: |
           $password = ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force
           Set-LocalUser -Name "runneradmin" -Password $password
+          Write-Host "✅ Admin password set!"
         shell: pwsh
 
+      # 7️⃣ Jalankan Ngrok untuk Membuka RDP
       - name: Create Ngrok Tunnel
         run: |
+          Write-Host "🚀 Starting Ngrok tunnel..."
           .\ngrok\ngrok.exe tcp 3389
         shell: pwsh
