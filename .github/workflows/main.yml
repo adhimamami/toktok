@@ -1,4 +1,4 @@
-name: RDP via Ngrok (Error 0x4 Fix)
+name: RDP via Ngrok (Fixed Shell Compatibility)
 
 on:
   workflow_dispatch:
@@ -23,30 +23,27 @@ jobs:
 
     - name: Full RDP Configuration
       run: |
-        # 1. Registry Settings
+        # Registry Settings
         reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
         reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f
 
-        # 2. Advanced Firewall Rules
-        netsh advfirewall firewall add rule name="RDP-Ngrok-TCP" dir=in protocol=TCP localport=3389 action=allow profile=any
-        netsh advfirewall firewall add rule name="RDP-Ngrok-UDP" dir=in protocol=UDP localport=3389 action=allow profile=any
+        # Firewall Rules (PowerShell Native)
+        New-NetFirewallRule -Name "RDP-TCP" -DisplayName "RDP (TCP-In)" -Protocol TCP -LocalPort 3389 -Action Allow
+        New-NetFirewallRule -Name "RDP-UDP" -DisplayName "RDP (UDP-In)" -Protocol UDP -LocalPort 3389 -Action Allow
 
-        # 3. Service Configuration
-        Set-Service TermService -StartupType Automatic
-        Start-Service TermService
-        sc.exe config TermService start= auto
-        net start TermService
+        # Service Management
+        Set-Service -Name TermService -StartupType Automatic
+        Restart-Service -Name TermService -Force
 
-        # 4. Network Interface Check
-        Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private
-      shell: cmd
+        # Network Profile
+        Set-NetConnectionProfile -NetworkCategory Private
+      shell: pwsh
 
     - name: User Management
       run: |
         $Password = ConvertTo-SecureString "P@ssw0rdRDP!2024" -AsPlainText -Force
-        New-LocalUser -Name "RDUser" -Password $Password -AccountNeverExpires
+        New-LocalUser -Name "RDUser" -Password $Password -AccountNeverExpires | Out-Null
         Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDUser"
-        Set-LocalUser -Name "RDUser" -PasswordNeverExpires 1
       shell: pwsh
 
     - name: Start Ngrok (Multi-Region)
@@ -55,13 +52,12 @@ jobs:
       run: |
         ./ngrok/ngrok config add-authtoken $env:NGROK_AUTH_TOKEN
         
-        # Start with multiple region attempts
         $regions = @("us", "eu", "ap")
         foreach ($region in $regions) {
-          Start-Process ./ngrok/ngrok.exe -ArgumentList "tcp 3389 --region=$region --log=stdout" -RedirectStandardOutput ngrok_$region.log
+          Start-Process ./ngrok/ngrok.exe -ArgumentList "tcp 3389 --region=$region --log=stdout" -RedirectStandardOutput "ngrok_$region.log"
           Start-Sleep -Seconds 15
           
-          $tunnel = Get-Content ngrok_$region.log | Select-String "tcp://(.+)" | % { $_.Matches.Groups[1].Value }
+          $tunnel = Get-Content "ngrok_$region.log" | Select-String "tcp://(.+)" | ForEach-Object { $_.Matches.Groups[1].Value }
           if ($tunnel) {
             Write-Host "##[group]🚀 TUNNEL ACTIVE ($region)"
             Write-Host "Address: $tunnel"
@@ -75,5 +71,5 @@ jobs:
       shell: pwsh
 
     - name: Keep Alive
-      run: ping -t localhost
-      shell: cmd
+      run: while ($true) { Start-Sleep -Seconds 3600 }
+      shell: pwsh
