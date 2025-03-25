@@ -1,122 +1,87 @@
-name: RDP with Ngrok
+name: RDP with Ngrok (Fixed)
 
 on:
-  - push
-  - workflow_dispatch
+  push:
+  workflow_dispatch:
 
 jobs:
   setup_rdp:
     runs-on: windows-latest
 
     steps:
-      # 1️⃣ Download Ngrok
-      - name: Download Ngrok
+      # 1️⃣ Download & Ekstrak Ngrok
+      - name: Setup Ngrok
         run: |
-          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-          Write-Host "✅ Ngrok ZIP downloaded!"
+          Invoke-WebRequest "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile ngrok.zip
+          Expand-Archive ngrok.zip -DestinationPath ngrok
+          if (-not (Test-Path ngrok/ngrok.exe)) { exit 1 }
         shell: pwsh
 
-      # 2️⃣ Ekstrak Ngrok
-      - name: Extract Ngrok
-        run: |
-          Expand-Archive -Path "ngrok.zip" -DestinationPath "ngrok"
-          Write-Host "✅ Ngrok extracted!"
-        shell: pwsh
-
-      # 3️⃣ Pastikan Ngrok Terekstrak dengan Benar
-      - name: Check Ngrok Executable
-        run: |
-          if (-Not (Test-Path "ngrok\ngrok.exe")) {
-            Write-Host "❌ ERROR: Ngrok executable not found!"
-            exit 1
-          } else {
-            Write-Host "✅ Ngrok executable found!"
-          }
-        shell: pwsh
-
-      # 4️⃣ Set Ngrok Auth Token
-      - name: Set Ngrok Auth Token
+      # 2️⃣ Autentikasi Ngrok
+      - name: Authenticate Ngrok
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-        run: |
-          .\ngrok\ngrok.exe config add-authtoken $Env:NGROK_AUTH_TOKEN
-          Write-Host "✅ Ngrok authentication successful!"
+        run: ./ngrok/ngrok config add-authtoken $env:NGROK_AUTH_TOKEN
         shell: pwsh
 
-      # 5️⃣ Aktifkan Remote Desktop (RDP)
-      - name: Enable Remote Desktop
+      # 3️⃣ Konfigurasi RDP
+      - name: Configure RDP
         run: |
-          Write-Host "🔧 Configuring RDP..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          # Enable RDP
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          
+          # Disable Network Level Authentication (NLA)
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
+          
+          # Start and configure Terminal Services
+          Start-Service TermService
+          Set-Service TermService -StartupType Automatic
+          
+          # Firewall rules
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          #  Tidak perlu mengatur UserAuthentication, biarkan default (0) untuk Network Level Authentication (NLA). Lebih aman.
-          # Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-          Write-Host "✅ RDP enabled!"
+          New-NetFirewallRule -DisplayName "RDP via Ngrok" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389
         shell: pwsh
 
-      # 6️⃣ Buat User Baru & Atur Password  (Lebih Aman)
-      - name: Create User and Set Password
+      # 4️⃣ Setup User
+      - name: Create RDP User
         run: |
-          $username = "RDPUser" # Ganti jika perlu
-          $password = ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force # Password Kuat!
+          $user = "GHActionUser"
+          $password = ConvertTo-SecureString "P@ssw0rdRDPSup3r!" -AsPlainText -Force
           
-          # Cek jika user sudah ada
-          if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
-              Write-Host "User '$username' already exists.  Updating password..."
-              Set-LocalUser -Name $username -Password $password
+          if (Get-LocalUser $user -ErrorAction SilentlyContinue) {
+              Set-LocalUser -Name $user -Password $password
           } else {
-              New-LocalUser -Name $username -Password $password -Description "RDP Access User" -PasswordNeverExpires
-              Write-Host "User '$username' created."
+              New-LocalUser -Name $user -Password $password -AccountNeverExpires
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user
           }
-          
-          # Tambahkan user ke group Remote Desktop Users
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-
-          Write-Host "✅ User created/updated and added to Remote Desktop Users group!"
-          Write-Host "🧑‍💻 Username: $username"
-          Write-Host "🔑 Password: P@ssw0rd123!" # Tampilkan password di log (untuk kemudahan, tapi HATI-HATI di lingkungan produksi!)
         shell: pwsh
-        
-      # 7️⃣ Jalankan Ngrok di Background & Ambil URL
+
+      # 5️⃣ Jalankan Ngrok dengan Stabil
       - name: Start Ngrok Tunnel
         run: |
-          Write-Host "🚀 Starting Ngrok tunnel..."
-          # Gunakan Start-Job untuk menjalankan Ngrok di background *tanpa* memblokir
-          $ngrokJob = Start-Job -ScriptBlock {
-              .\ngrok\ngrok.exe tcp 3389
-          }
+          # Start Ngrok in background
+          $ngrokProcess = Start-Process -FilePath "./ngrok/ngrok.exe" -ArgumentList "tcp 3389" -PassThru -NoNewWindow
           
-          Start-Sleep -Seconds 15  # Beri waktu lebih untuk Ngrok benar-benar jalan
-
-          # Ambil URL Ngrok, loop sampai dapat
-          $ngrok_url = $null
-          $attempts = 0
-          while (-not $ngrok_url -and $attempts -lt 10) {  # Coba maksimal 10 kali
+          # Tunggu hingga tunnel aktif
+          $tunnelUrl = $null
+          $retryCount = 0
+          while (-not $tunnelUrl -and $retryCount -lt 10) {
               try {
-                  $ngrok_url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels -TimeoutSec 5).Content | ConvertFrom-Json | Select-Object -ExpandProperty tunnels | Where-Object {$_.public_url -like "tcp://*"} | Select-Object -ExpandProperty public_url
+                  $tunnelInfo = (Invoke-WebRequest -Uri "http://localhost:4040/api/tunnels" -UseBasicParsing).Content | ConvertFrom-Json
+                  $tunnelUrl = $tunnelInfo.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -ExpandProperty public_url
+                  Start-Sleep -Seconds 5
+                  $retryCount++
+              } catch { 
+                  Start-Sleep -Seconds 5 
+                  $retryCount++ 
               }
-              catch {
-                  Write-Host "Waiting for Ngrok tunnel..."
-              }
-              Start-Sleep -Seconds 5
-              $attempts++
           }
-            
-          if (-not $ngrok_url) {
-              Write-Host "❌ ERROR: Failed to retrieve Ngrok URL after multiple attempts."
-              exit 1  # Hentikan workflow jika gagal
-          }
-
-          Write-Host "✅ Ngrok Tunnel Ready!"
-          Write-Host "🌍 Server Address: $ngrok_url"
           
+          if (-not $tunnelUrl) { exit 1 }
+          Write-Host "RDP Address: $tunnelUrl"
         shell: pwsh
 
-
-
-      # 8️⃣ Keep Alive (Agar Workflow Tidak Berhenti)
+      # 6️⃣ Pertahankan Session
       - name: Keep Alive
-        run: |
-          Write-Host "🟢 Keeping session alive..."
-          while ($true) { Start-Sleep -Seconds 3600 }
+        run: while ($true) { Start-Sleep -Seconds 3600 }
         shell: pwsh
