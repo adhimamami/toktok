@@ -1,4 +1,4 @@
-name: RDP with Ngrok - Improved
+name: RDP with Ngrok - Debugging Version
 
 on:
   push:
@@ -9,21 +9,18 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # 1️⃣ Download Ngrok
       - name: Download Ngrok
         run: |
           Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
           Write-Host "✅ Ngrok ZIP downloaded!"
         shell: pwsh
 
-      # 2️⃣ Ekstrak Ngrok
       - name: Extract Ngrok
         run: |
           Expand-Archive -Path "ngrok.zip" -DestinationPath "ngrok"
           Write-Host "✅ Ngrok extracted!"
         shell: pwsh
 
-      # 3️⃣ Verifikasi Ngrok Executable
       - name: Check Ngrok Executable
         run: |
           if (-Not (Test-Path "ngrok\ngrok.exe")) {
@@ -34,7 +31,6 @@ jobs:
           }
         shell: pwsh
 
-      # 4️⃣ Set Ngrok Auth Token
       - name: Set Ngrok Auth Token
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
@@ -43,18 +39,14 @@ jobs:
           Write-Host "✅ Ngrok authentication successful!"
         shell: pwsh
 
-      # 5️⃣ Aktifkan Remote Desktop dan Pastikan Service Berjalan
-      - name: Enable Remote Desktop and Verify Service
+      - name: Enable RDP and Check Service
         run: |
           Write-Host "🔧 Configuring RDP..."
-          # Aktifkan koneksi RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Write-Host "✅ RDP enabled!"
-
-          # Pastikan service Remote Desktop (TermService) sedang berjalan
-          $termService = Get-Service -Name TermService
-          if ($termService.Status -ne 'Running') {
+          # Periksa service RDP
+          $service = Get-Service -Name TermService
+          if ($service.Status -ne 'Running') {
               Start-Service -Name TermService
               Write-Host "✅ TermService started!"
           } else {
@@ -62,10 +54,9 @@ jobs:
           }
         shell: pwsh
 
-      # 6️⃣ Buat User Baru & Atur Password
       - name: Create User and Set Password
         run: |
-          $username = "RDPUser" # Ubah jika perlu
+          $username = "RDPUser"
           $password = ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force
           
           if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
@@ -79,20 +70,21 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
           Write-Host "✅ User created/updated and added to Remote Desktop Users group!"
           Write-Host "🧑‍💻 Username: $username"
-          Write-Host "🔑 Password: P@ssw0rd123!" 
+          Write-Host "🔑 Password: P@ssw0rd123!"
+          
+          # Debug: Tampilkan daftar user dan anggota group
+          Write-Host "Daftar user lokal:"
+          Get-LocalUser
+          Write-Host "Anggota group 'Remote Desktop Users':"
+          Get-LocalGroupMember -Group "Remote Desktop Users"
         shell: pwsh
 
-      # 7️⃣ Jalankan Ngrok Tunnel dengan Start-Process dan Dapatkan URL
-      - name: Start Ngrok Tunnel and Retrieve URL
+      - name: Start Ngrok Tunnel and Debug Port 3389
         run: |
           Write-Host "🚀 Starting Ngrok tunnel..."
-          # Mulai ngrok sebagai proses terpisah dan simpan process object-nya
           $ngrokProcess = Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp", "3389" -NoNewWindow -PassThru
-
-          # Tunggu beberapa saat agar ngrok dapat inisialisasi
           Start-Sleep -Seconds 20
 
-          # Loop untuk mengambil URL dari API Ngrok
           $ngrok_url = $null
           $attempts = 0
           while (-not $ngrok_url -and $attempts -lt 12) {
@@ -123,9 +115,12 @@ jobs:
 
           Write-Host "✅ Ngrok Tunnel Ready!"
           Write-Host "🌍 Server Address: $ngrok_url"
+
+          # Debug: Cek apakah port 3389 sedang mendengarkan
+          Write-Host "Status port 3389:"
+          netstat -an | findstr "3389"
         shell: pwsh
 
-      # 8️⃣ Keep Alive (Agar Workflow Tidak Berhenti)
       - name: Keep Alive
         run: |
           Write-Host "🟢 Keeping session alive..."
