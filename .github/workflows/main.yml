@@ -21,7 +21,6 @@ jobs:
         run: |
           Expand-Archive -Path "ngrok.zip" -DestinationPath "ngrok"
           Write-Host "✅ Ngrok extracted!"
-          Get-ChildItem -Path "ngrok" -Recurse  # Debugging isi folder
         shell: pwsh
 
       # 3️⃣ Pastikan Ngrok Terekstrak dengan Benar
@@ -62,9 +61,24 @@ jobs:
           Write-Host "✅ Admin password set!"
         shell: pwsh
 
-      # 7️⃣ Jalankan Ngrok untuk Membuka RDP
-      - name: Create Ngrok Tunnel
+      # 7️⃣ Jalankan Ngrok di Background & Ambil URL
+      - name: Start Ngrok Tunnel
         run: |
           Write-Host "🚀 Starting Ngrok tunnel..."
-          .\ngrok\ngrok.exe tcp 3389
+          Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
+          Start-Sleep -Seconds 10  # Beri waktu untuk Ngrok berjalan
+
+          # Ambil URL Ngrok
+          $ngrok_url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels | ConvertFrom-Json).tunnels[0].public_url
+          Write-Host "✅ Ngrok Tunnel Ready!"
+          Write-Host "🌍 Server Address: $ngrok_url"
+          Write-Host "🧑‍💻 Username: runneradmin"
+          Write-Host "🔑 Password: P@ssw0rd!"
+        shell: pwsh
+
+      # 8️⃣ Keep Alive (Agar Workflow Tidak Berhenti)
+      - name: Keep Alive
+        run: |
+          Write-Host "🟢 Keeping session alive..."
+          while ($true) { Start-Sleep -Seconds 3600 }
         shell: pwsh
