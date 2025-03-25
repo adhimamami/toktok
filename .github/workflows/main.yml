@@ -9,32 +9,19 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # 1️⃣ Download Ngrok
-      - name: Download Ngrok
+      # 1️⃣ Download & Extract Ngrok
+      - name: Download & Extract Ngrok
         run: |
           Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-          Write-Host "✅ Ngrok ZIP downloaded!"
-        shell: pwsh
-
-      # 2️⃣ Ekstrak Ngrok
-      - name: Extract Ngrok
-        run: |
           Expand-Archive -Path "ngrok.zip" -DestinationPath "ngrok"
-          Write-Host "✅ Ngrok extracted!"
-        shell: pwsh
-
-      # 3️⃣ Pastikan Ngrok Terekstrak dengan Benar
-      - name: Check Ngrok Executable
-        run: |
           if (-Not (Test-Path "ngrok\ngrok.exe")) {
             Write-Host "❌ ERROR: Ngrok executable not found!"
             exit 1
-          } else {
-            Write-Host "✅ Ngrok executable found!"
           }
+          Write-Host "✅ Ngrok downloaded & extracted!"
         shell: pwsh
 
-      # 4️⃣ Set Ngrok Auth Token
+      # 2️⃣ Set Ngrok Auth Token
       - name: Set Ngrok Auth Token
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
@@ -43,29 +30,29 @@ jobs:
           Write-Host "✅ Ngrok authentication successful!"
         shell: pwsh
 
-- name: Enable Remote Desktop
-  run: |
-    Write-Host "🔧 Configuring RDP..."
-    
-    # Izinkan koneksi RDP
-    Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+      # 3️⃣ Aktifkan Remote Desktop (RDP) + Firewall Rules
+      - name: Enable Remote Desktop (RDP)
+        run: |
+          Write-Host "🔧 Configuring RDP..."
+          
+          # Aktifkan RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
 
-    # Pastikan firewall tidak memblokir RDP
-    Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          # Pastikan firewall mengizinkan RDP
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    # Atur metode otentikasi agar lebih kompatibel
-    Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          # Nonaktifkan User Authentication agar lebih kompatibel
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
 
-    # Set policy agar user bisa login dengan RDP
-    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name "fDenyTSConnections" -PropertyType DWord -Value 0 -Force
+          # Set registry policy agar RDP bisa digunakan
+          New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name "fDenyTSConnections" -PropertyType DWord -Value 0 -Force
 
-    # Restart layanan Remote Desktop
-    Restart-Service -Name TermService -Force
-    Write-Host "✅ RDP configuration updated & service restarted!"
-  shell: pwsh
+          # Restart layanan RDP
+          Restart-Service -Name TermService -Force
+          Write-Host "✅ RDP enabled and configured!"
+        shell: pwsh
 
-
-      # 6️⃣ Atur Password User "runneradmin"
+      # 4️⃣ Atur Password User "runneradmin"
       - name: Set Admin Password
         run: |
           $password = ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force
@@ -73,22 +60,33 @@ jobs:
           Write-Host "✅ Admin password set!"
         shell: pwsh
 
-      # 7️⃣ Jalankan Ngrok di Background & Ambil URL
+      # 5️⃣ Jalankan Ngrok di Background & Ambil URL RDP
       - name: Start Ngrok Tunnel
         run: |
           Write-Host "🚀 Starting Ngrok tunnel..."
           Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
-          Start-Sleep -Seconds 10  # Beri waktu untuk Ngrok berjalan
+          Start-Sleep -Seconds 10  # Tunggu Ngrok berjalan
 
-          # Ambil URL Ngrok
+          # Ambil URL Ngrok untuk koneksi RDP
           $ngrok_url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels | ConvertFrom-Json).tunnels[0].public_url
+          
+          # Simpan URL dalam file untuk memudahkan akses
+          echo "🌍 Server Address: $ngrok_url" > ngrok_rdp.txt
+          echo "🧑‍💻 Username: runneradmin" >> ngrok_rdp.txt
+          echo "🔑 Password: P@ssw0rd!" >> ngrok_rdp.txt
+
           Write-Host "✅ Ngrok Tunnel Ready!"
           Write-Host "🌍 Server Address: $ngrok_url"
           Write-Host "🧑‍💻 Username: runneradmin"
           Write-Host "🔑 Password: P@ssw0rd!"
         shell: pwsh
 
-      # 8️⃣ Keep Alive (Agar Workflow Tidak Berhenti)
+      # 6️⃣ Menampilkan URL Ngrok ke Output Log GitHub Actions
+      - name: Show RDP Credentials
+        run: cat ngrok_rdp.txt
+        shell: pwsh
+
+      # 7️⃣ Keep Alive (Agar Workflow Tidak Berhenti)
       - name: Keep Alive
         run: |
           Write-Host "🟢 Keeping session alive..."
