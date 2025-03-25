@@ -43,7 +43,7 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           # Izinkan koneksi melalui firewall
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          # Aktifkan UserAuthentication
+          # Pastikan User Authentication aktif (sesuaikan jika diperlukan)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
           Write-Host "✅ Remote Desktop enabled!"
         shell: pwsh
@@ -62,21 +62,30 @@ jobs:
           Start-Process -NoNewWindow -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
         shell: pwsh
 
-      - name: ⏳ Wait for Ngrok to Initialize
-        run: Start-Sleep -Seconds 10
-        shell: pwsh
-
-      - name: 🌐 Get Ngrok Tunnel Info
+      - name: ⏳ Wait for Ngrok Tunnel to be Available
         run: |
-          Write-Host "🔎 Fetching Ngrok tunnel details..."
-          $tunnels = (Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:4040/api/tunnels | ConvertFrom-Json).tunnels
-          $ngrok_tunnel = $tunnels | Where-Object { $_.proto -eq "tcp" }
-          if (-Not $ngrok_tunnel.public_url) {
-            Write-Host "❌ ERROR: Failed to fetch Ngrok tunnel URL!"
+          $maxRetries = 30
+          $tunnelUrl = ""
+          for ($i = 0; $i -lt $maxRetries; $i++) {
+            try {
+              $response = Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:4040/api/tunnels -TimeoutSec 5 | ConvertFrom-Json
+              $tunnel = $response.tunnels | Where-Object { $_.proto -eq "tcp" }
+              if ($tunnel -and $tunnel.public_url) {
+                $tunnelUrl = $tunnel.public_url
+                break
+              }
+            }
+            catch {
+              Write-Host "Waiting for ngrok tunnel to be available... (Attempt $($i + 1) of $maxRetries)"
+            }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $tunnelUrl) {
+            Write-Host "❌ ERROR: Ngrok tunnel not available after waiting."
             exit 1
           }
-          Write-Host "✅ Ngrok tunnel established!"
-          Write-Host "🌍 RDP Address: $($ngrok_tunnel.public_url)"
+          Write-Host "✅ Ngrok tunnel established: $tunnelUrl"
+          Write-Host "🌍 RDP Address: $tunnelUrl"
           Write-Host "👤 Username: runneradmin"
           Write-Host "🔑 Password: P@ssw0rd!"
         shell: pwsh
