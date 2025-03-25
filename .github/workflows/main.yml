@@ -10,16 +10,33 @@ jobs:
     steps:
       # 1️⃣ **Unduh & Ekstrak Ngrok**
       - name: Download & Extract Ngrok
-        run: |
-          Write-Host "🚀 Downloading Ngrok..."
-          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-          Expand-Archive -Path "ngrok.zip" -DestinationPath "."
-          if (-Not (Test-Path ".\ngrok\ngrok.exe")) {
-            Write-Host "❌ ERROR: Ngrok executable not found!"
-            exit 1
-          }
-          Write-Host "✅ Ngrok downloaded & extracted!"
-        shell: pwsh
+  run: |
+    Write-Host "🚀 Downloading Ngrok..."
+    
+    # Gunakan curl untuk download agar lebih stabil
+    curl -Lo ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip
+    
+    # Pastikan file terunduh sebelum lanjut
+    if (-Not (Test-Path "ngrok.zip")) {
+      Write-Host "❌ ERROR: Ngrok download failed!"
+      exit 1
+    }
+
+    Write-Host "✅ Ngrok downloaded successfully!"
+
+    # Gunakan 7-Zip untuk ekstrak lebih aman
+    Write-Host "📦 Extracting Ngrok..."
+    7z x ngrok.zip -o. -y
+
+    # Pastikan file ngrok.exe ada
+    if (-Not (Test-Path ".\ngrok.exe")) {
+      Write-Host "❌ ERROR: Ngrok executable not found after extraction!"
+      exit 1
+    }
+
+    Write-Host "✅ Ngrok extracted successfully!"
+  shell: pwsh
+
 
       # 2️⃣ **Set Ngrok Auth Token**
       - name: Authenticate Ngrok
