@@ -1,75 +1,25 @@
-name: RDP via Ngrok (Fixed Shell Compatibility)
+name: Cl
 
-on:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
-  rdp_setup:
+  build:
+
     runs-on: windows-latest
 
     steps:
-    - name: Cleanup & Prep
-      run: |
-        Remove-Item -Path ngrok, ngrok.zip -Recurse -Force -ErrorAction SilentlyContinue
-      shell: pwsh
-
-    - name: Install Ngrok
-      run: |
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile ngrok.zip
-        Expand-Archive ngrok.zip -DestinationPath ngrok -Force
-        if (-not (Test-Path ngrok/ngrok.exe)) { exit 1 }
-      shell: pwsh
-
-    - name: Full RDP Configuration
-      run: |
-        # Registry Settings
-        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
-        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f
-
-        # Firewall Rules (PowerShell Native)
-        New-NetFirewallRule -Name "RDP-TCP" -DisplayName "RDP (TCP-In)" -Protocol TCP -LocalPort 3389 -Action Allow
-        New-NetFirewallRule -Name "RDP-UDP" -DisplayName "RDP (UDP-In)" -Protocol UDP -LocalPort 3389 -Action Allow
-
-        # Service Management
-        Set-Service -Name TermService -StartupType Automatic
-        Restart-Service -Name TermService -Force
-
-        # Network Profile
-        Set-NetConnectionProfile -NetworkCategory Private
-      shell: pwsh
-
-    - name: User Management
-      run: |
-        $Password = ConvertTo-SecureString "P@ssw0rdRDP!2024" -AsPlainText -Force
-        New-LocalUser -Name "RDUser" -Password $Password -AccountNeverExpires | Out-Null
-        Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDUser"
-      shell: pwsh
-
-    - name: Start Ngrok (Multi-Region)
+    - name: Download
+      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+    - name: Extract
+      run: Expand-Archive ngrok.zip
+    - name: Auth
+      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-      run: |
-        ./ngrok/ngrok config add-authtoken $env:NGROK_AUTH_TOKEN
-        
-        $regions = @("us", "eu", "ap")
-        foreach ($region in $regions) {
-          Start-Process ./ngrok/ngrok.exe -ArgumentList "tcp 3389 --region=$region --log=stdout" -RedirectStandardOutput "ngrok_$region.log"
-          Start-Sleep -Seconds 15
-          
-          $tunnel = Get-Content "ngrok_$region.log" | Select-String "tcp://(.+)" | ForEach-Object { $_.Matches.Groups[1].Value }
-          if ($tunnel) {
-            Write-Host "##[group]🚀 TUNNEL ACTIVE ($region)"
-            Write-Host "Address: $tunnel"
-            Write-Host "User: RDUser"
-            Write-Host "Password: P@ssw0rdRDP!2024"
-            Write-Host "##[endgroup]"
-            exit 0
-          }
-        }
-        exit 1
-      shell: pwsh
-
-    - name: Keep Alive
-      run: while ($true) { Start-Sleep -Seconds 3600 }
-      shell: pwsh
+    - name: Enable TS
+      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+    - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+    - name: Create Tunnel
+      run: .\ngrok\ngrok.exe tcp 3389
