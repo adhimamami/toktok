@@ -43,15 +43,27 @@ jobs:
           Write-Host "✅ Ngrok authentication successful!"
         shell: pwsh
 
-      # 5️⃣ Aktifkan Remote Desktop (RDP)
-      - name: Enable Remote Desktop
-        run: |
-          Write-Host "🔧 Configuring RDP..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-          Write-Host "✅ RDP enabled!"
-        shell: pwsh
+- name: Enable Remote Desktop
+  run: |
+    Write-Host "🔧 Configuring RDP..."
+    
+    # Izinkan koneksi RDP
+    Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+
+    # Pastikan firewall tidak memblokir RDP
+    Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+    # Atur metode otentikasi agar lebih kompatibel
+    Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+
+    # Set policy agar user bisa login dengan RDP
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name "fDenyTSConnections" -PropertyType DWord -Value 0 -Force
+
+    # Restart layanan Remote Desktop
+    Restart-Service -Name TermService -Force
+    Write-Host "✅ RDP configuration updated & service restarted!"
+  shell: pwsh
+
 
       # 6️⃣ Atur Password User "runneradmin"
       - name: Set Admin Password
