@@ -1,4 +1,4 @@
-name: RDP with Ngrok - Debugging Version
+name: RDP with Ngrok - Complete & Alternative ISO
 
 on:
   push:
@@ -6,21 +6,25 @@ on:
 
 jobs:
   setup_rdp:
-    runs-on: windows-latest
+    # Anda bisa mengubah runner image di sini: windows-latest, windows-2022, atau windows-2019
+    runs-on: windows-2022
 
     steps:
+      # 1️⃣ Download Ngrok
       - name: Download Ngrok
         run: |
           Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
           Write-Host "✅ Ngrok ZIP downloaded!"
         shell: pwsh
 
+      # 2️⃣ Ekstrak Ngrok
       - name: Extract Ngrok
         run: |
           Expand-Archive -Path "ngrok.zip" -DestinationPath "ngrok"
           Write-Host "✅ Ngrok extracted!"
         shell: pwsh
 
+      # 3️⃣ Verifikasi Ngrok Executable
       - name: Check Ngrok Executable
         run: |
           if (-Not (Test-Path "ngrok\ngrok.exe")) {
@@ -31,6 +35,7 @@ jobs:
           }
         shell: pwsh
 
+      # 4️⃣ Set Ngrok Auth Token
       - name: Set Ngrok Auth Token
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
@@ -39,21 +44,25 @@ jobs:
           Write-Host "✅ Ngrok authentication successful!"
         shell: pwsh
 
-      - name: Enable RDP and Check Service
+      # 5️⃣ Aktifkan RDP, Nonaktifkan NLA, dan Restart Layanan RDP
+      - name: Enable RDP, Disable NLA, and Restart RDP Service
         run: |
           Write-Host "🔧 Configuring RDP..."
+          # Aktifkan koneksi RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          # Periksa service RDP
-          $service = Get-Service -Name TermService
-          if ($service.Status -ne 'Running') {
-              Start-Service -Name TermService
-              Write-Host "✅ TermService started!"
-          } else {
-              Write-Host "✅ TermService is already running."
-          }
+          Write-Host "✅ RDP enabled!"
+
+          # Nonaktifkan Network Level Authentication (NLA) untuk testing
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          Write-Host "✅ NLA disabled (UserAuthentication set to 0)"
+
+          # Restart service RDP (TermService)
+          Restart-Service -Name TermService -Force
+          Write-Host "✅ TermService restarted!"
         shell: pwsh
 
+      # 6️⃣ Buat User Baru dan Atur Password
       - name: Create User and Set Password
         run: |
           $username = "RDPUser"
@@ -72,13 +81,14 @@ jobs:
           Write-Host "🧑‍💻 Username: $username"
           Write-Host "🔑 Password: P@ssw0rd123!"
           
-          # Debug: Tampilkan daftar user dan anggota group
+          # Debug: Tampilkan daftar user lokal dan anggota grup
           Write-Host "Daftar user lokal:"
           Get-LocalUser
           Write-Host "Anggota group 'Remote Desktop Users':"
           Get-LocalGroupMember -Group "Remote Desktop Users"
         shell: pwsh
 
+      # 7️⃣ Jalankan Ngrok Tunnel dan Debug Port 3389
       - name: Start Ngrok Tunnel and Debug Port 3389
         run: |
           Write-Host "🚀 Starting Ngrok tunnel..."
@@ -116,13 +126,18 @@ jobs:
           Write-Host "✅ Ngrok Tunnel Ready!"
           Write-Host "🌍 Server Address: $ngrok_url"
 
-          # Debug: Cek apakah port 3389 sedang mendengarkan
+          # Debug: Cek apakah port 3389 sudah mendengarkan
           Write-Host "Status port 3389:"
           netstat -an | findstr "3389"
         shell: pwsh
 
+      # 8️⃣ Keep Alive agar Workflow tidak berhenti
       - name: Keep Alive
         run: |
           Write-Host "🟢 Keeping session alive..."
           while ($true) { Start-Sleep -Seconds 3600 }
         shell: pwsh
+
+# Alternatif:
+# Jika Anda ingin mencoba runner dengan image Windows yang berbeda (misalnya, windows-2019),
+# Anda dapat menambahkan job baru atau mengubah baris 'runs-on' di atas.
