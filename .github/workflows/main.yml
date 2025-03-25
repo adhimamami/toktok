@@ -1,9 +1,10 @@
 name: RDP via Ngrok
 
-on: [push, workflow_dispatch]
+on:
+  workflow_dispatch
 
 jobs:
-  build:
+  setup_rdp:
     runs-on: windows-latest
 
     steps:
@@ -31,67 +32,78 @@ jobs:
         shell: pwsh
 
       - name: 🔑 Authenticate Ngrok
-        run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+        run: |
+          .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+          Write-Host "✅ Ngrok authentication successful!"
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         shell: pwsh
 
       - name: 🎛 Enable Remote Desktop
         run: |
-          Write-Host "🔓 Enabling RDP access..."
-          # Aktifkan RDP
+          Write-Host "🔧 Configuring Remote Desktop..."
+          # Aktifkan RDP di registry
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           # Izinkan koneksi melalui firewall
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          # Pastikan User Authentication aktif (sesuaikan jika diperlukan)
+          # Jika perlu, sesuaikan UserAuthentication (default 1 berarti NLA aktif)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
           Write-Host "✅ Remote Desktop enabled!"
         shell: pwsh
 
       - name: 🛠 Set RDP Password
         run: |
-          Write-Host "🔑 Setting RDP password..."
+          Write-Host "🔑 Setting RDP password for runneradmin..."
           $Password = ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force
           Set-LocalUser -Name "runneradmin" -Password $Password
-          Write-Host "✅ RDP password set!"
+          Write-Host "✅ Password set to P@ssw0rd!"
         shell: pwsh
 
       - name: 🚀 Start Ngrok Tunnel
         run: |
-          Write-Host "🚀 Starting Ngrok tunnel..."
+          Write-Host "🚀 Starting Ngrok tunnel on TCP port 3389..."
           Start-Process -NoNewWindow -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
         shell: pwsh
 
-      - name: ⏳ Wait for Ngrok Tunnel to be Available
+      - name: ⏳ Wait for Ngrok Tunnel to be Ready
         run: |
           $maxRetries = 30
-          $tunnelUrl = ""
-          for ($i = 0; $i -lt $maxRetries; $i++) {
-            try {
-              $response = Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:4040/api/tunnels -TimeoutSec 5 | ConvertFrom-Json
-              $tunnel = $response.tunnels | Where-Object { $_.proto -eq "tcp" }
-              if ($tunnel -and $tunnel.public_url) {
-                $tunnelUrl = $tunnel.public_url
-                break
+          $tunnelUrl = $null
+          for ($i = 1; $i -le $maxRetries; $i++) {
+              try {
+                  $response = Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels -UseBasicParsing -TimeoutSec 5 | ConvertFrom-Json
+                  $tcpTunnel = $response.tunnels | Where-Object { $_.proto -eq "tcp" }
+                  if ($tcpTunnel -and $tcpTunnel.public_url) {
+                      $tunnelUrl = $tcpTunnel.public_url
+                      Write-Host "✅ Ngrok tunnel established on attempt $i."
+                      break
+                  }
               }
-            }
-            catch {
-              Write-Host "Waiting for ngrok tunnel to be available... (Attempt $($i + 1) of $maxRetries)"
-            }
-            Start-Sleep -Seconds 5
+              catch {
+                  Write-Host "Waiting for Ngrok tunnel... attempt $i/$maxRetries"
+              }
+              Start-Sleep -Seconds 5
           }
           if (-not $tunnelUrl) {
-            Write-Host "❌ ERROR: Ngrok tunnel not available after waiting."
-            exit 1
+              Write-Host "❌ ERROR: Ngrok tunnel not available after waiting."
+              exit 1
           }
-          Write-Host "✅ Ngrok tunnel established: $tunnelUrl"
-          Write-Host "🌍 RDP Address: $tunnelUrl"
-          Write-Host "👤 Username: runneradmin"
-          Write-Host "🔑 Password: P@ssw0rd!"
+          # Simpan informasi RDP di file
+          $info = @"
+🌍 RDP Address: $tunnelUrl
+👤 Username: runneradmin
+🔑 Password: P@ssw0rd!
+"@
+          $info | Out-File -FilePath "rdp_info.txt" -Encoding utf8
+          Write-Host $info
+        shell: pwsh
+
+      - name: 📄 Display RDP Info
+        run: Get-Content -Path "rdp_info.txt"
         shell: pwsh
 
       - name: 🛡 Keep Session Alive
         run: |
-          Write-Host "⏳ Keeping session alive..."
+          Write-Host "⏳ Keeping session alive. Press Ctrl+C to end."
           while ($true) { Start-Sleep -Seconds 3600 }
         shell: pwsh
