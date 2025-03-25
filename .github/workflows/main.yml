@@ -10,22 +10,31 @@ jobs:
 
     steps:
       - name: Download Ngrok
-        run: Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+        run: |
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+          Write-Host "Ngrok ZIP downloaded!"
         shell: pwsh
 
       - name: Extract Ngrok
         run: |
-          Expand-Archive -Path "ngrok.zip" -DestinationPath "."
-          Get-ChildItem -Path . -Recurse  # Cek isi setelah ekstraksi
+          Expand-Archive -Path "ngrok.zip" -DestinationPath "ngrok"
+          Write-Host "Ngrok extracted!"
+          Get-ChildItem -Path "ngrok" -Recurse  # Debugging isi folder
+        shell: pwsh
+
+      - name: Check Ngrok Executable
+        run: |
+          if (-Not (Test-Path "ngrok\ngrok.exe")) {
+            Write-Host "ERROR: Ngrok executable not found!"
+            exit 1
+          }
         shell: pwsh
 
       - name: Set Ngrok Auth Token
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          $ngrokPath = Get-ChildItem -Path . -Recurse | Where-Object { $_.Name -eq "ngrok.exe" } | Select-Object -ExpandProperty FullName
-          Write-Host "Ngrok Path: $ngrokPath"
-          & $ngrokPath authtoken $Env:NGROK_AUTH_TOKEN
+          .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
         shell: pwsh
 
       - name: Enable Remote Desktop (RDP)
@@ -43,6 +52,5 @@ jobs:
 
       - name: Create Ngrok Tunnel
         run: |
-          $ngrokPath = Get-ChildItem -Path . -Recurse | Where-Object { $_.Name -eq "ngrok.exe" } | Select-Object -ExpandProperty FullName
-          & $ngrokPath tcp 3389
+          .\ngrok\ngrok.exe tcp 3389
         shell: pwsh
